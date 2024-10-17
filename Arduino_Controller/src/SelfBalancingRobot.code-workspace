@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"name": "SelfBalancingBot_Arduino",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

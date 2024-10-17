@@ -1,5 +1,7 @@
+#include <Arduino.h>
 #include <Wire.h>
 #include <VL53L1X.h>
+
 
 VL53L1X sensor;
 
@@ -7,10 +9,10 @@ void setup()
 {
   // Start serial communication
   Serial.begin(115200);
-  
+  delay(1000);
   // Initialize I2C
   Wire.begin(21, 22);  // SDA, SCL
-  Wire.setClock(200); // Set I2C to 400 kHz for VL53L1X
+  //Wire.setClock(400000); // Set I2C to 400 kHz for VL53L1X
 
   // Initialize the sensor
   sensor.setTimeout(500);
@@ -42,6 +44,6 @@ void loop()
   Serial.print(sensor.ranging_data.peak_signal_count_rate_MCPS);
   Serial.print("\tAmbient (MCPS): ");
   Serial.println(sensor.ranging_data.ambient_count_rate_MCPS);
-
+  Serial.flush();
   delay(100); // Delay before the next reading
 }
