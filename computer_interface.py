@@ -1,18 +1,25 @@
 import dearpygui.dearpygui as dpg
 import numpy as np
 import time
+import paho.mqtt.client as mqtt
+import threading  # Import threading for the background MQTT loop
 
 # ---------------------------
 # Configurable Variables
 # ---------------------------
 
 # Interface dimensions
-WINDOW_WIDTH = 700
-WINDOW_HEIGHT = 700
-PLOT_WIDTH = 400
+WINDOW_WIDTH = 800
+WINDOW_HEIGHT = 800
+PLOT_WIDTH = 350
 PLOT_HEIGHT = 200
 SLIDER_WIDTH = 200
-SPACING_BETWEEN_GROUPS = 10  # Spacing between sets of sliders
+SPACING_BETWEEN_GROUPS = 20  # Spacing between sets of sliders
+
+# MQTT Configurations
+MQTT_BROKER = "broker.hivemq.com"
+BALANCE_TOPIC = "esp32/gains/balance"
+FOLLOW_TOPIC = "esp32/gains/follow"
 
 # Labels for controllers
 BALANCING_CONTROLLER_LABEL = "Balancing Controller"
@@ -25,8 +32,8 @@ KD2_LABEL = "Kd2"
 KI2_LABEL = "Ki2"
 
 # Button properties
-BUTTON_DEFAULT_COLOR = (200, 200, 200, 255)  # Default button color (RGBA)
-BUTTON_PRESSED_COLOR = (0, 255, 0, 255)  # Button color when pressed (RGBA)
+BUTTON_DEFAULT_COLOR = (232, 83, 89, 255)  # Default button color (RGBA)
+BUTTON_PRESSED_COLOR = (7, 166, 61, 255)  # Button color when pressed (RGBA)
 
 # ---------------------------
 # Dummy data for plots
@@ -36,6 +43,7 @@ x_data = np.linspace(0, 10, 100)
 angle_data = np.sin(x_data)
 angular_velocity_data = np.cos(x_data)
 displacement_data = np.tan(x_data)
+pwm_data = np.abs(np.sin(x_data))
 
 # ---------------------------
 # Global Variables
@@ -59,28 +67,45 @@ printed_flag_following = False
 button_pressed = False
 
 # ---------------------------
+# MQTT Setup
+# ---------------------------
+
+# Initialize the MQTT client
+client = mqtt.Client()
+
+# Connect to the broker
+client.connect(MQTT_BROKER)
+
+# Start the MQTT loop in a separate thread
+client.loop_start()
+
+# ---------------------------
 # Helper Functions
 # ---------------------------
 
-# Function to print Balancing Controller gains if unchanged for 1 second
+# Function to print and publish Balancing Controller gains if unchanged for 1 second
 def print_balancing_gains_if_stable():
     global printed_flag_balancing
     current_time = time.time()
     
     if current_time - last_update_time_balancing >= 1.0 and not printed_flag_balancing:
         if current_values != last_printed_values:
-            print(f"{BALANCING_CONTROLLER_LABEL} Gains: Kp={current_values['kp']:.2f}, Kd={current_values['kd']:.2f}, Ki={current_values['ki']:.2f}")
+            balance_gains_str = f"{BALANCING_CONTROLLER_LABEL} Gains: Kp={current_values['kp']:.2f}, Kd={current_values['kd']:.2f}, Ki={current_values['ki']:.2f}"
+            print(balance_gains_str)
+            client.publish(BALANCE_TOPIC, balance_gains_str)  # Publish the balancing gains
             last_printed_values.update(current_values)
             printed_flag_balancing = True
 
-# Function to print Following Controller gains if unchanged for 1 second
+# Function to print and publish Following Controller gains if unchanged for 1 second
 def print_following_gains_if_stable():
     global printed_flag_following
     current_time = time.time()
     
     if current_time - last_update_time_following >= 1.0 and not printed_flag_following:
         if current_values2 != last_printed_values2:
-            print(f"{FOLLOWING_CONTROLLER_LABEL} Gains: Kp2={current_values2['kp2']:.2f}, Kd2={current_values2['kd2']:.2f}, Ki2={current_values2['ki2']:.2f}")
+            follow_gains_str = f"{FOLLOWING_CONTROLLER_LABEL} Gains: Kp2={current_values2['kp2']:.2f}, Kd2={current_values2['kd2']:.2f}, Ki2={current_values2['ki2']:.2f}"
+            print(follow_gains_str)
+            client.publish(FOLLOW_TOPIC, follow_gains_str)  # Publish the following gains
             last_printed_values2.update(current_values2)
             printed_flag_following = True
 
@@ -162,60 +187,64 @@ with dpg.theme(tag="pressed_button_theme") as pressed_button_theme:
 
 # Main GUI layout
 with dpg.window(label="Robot Data Viewer", width=WINDOW_WIDTH, height=WINDOW_HEIGHT):
-    with dpg.group(horizontal=True):  # Horizontal layout to align plots and sliders
+    with dpg.group(horizontal=False):  # Group the content vertically
+    
+        # 2x2 Grid of plots
+        with dpg.group(horizontal=True):
+            # Group for top two plots (angle and angular velocity)
+            with dpg.group():
+                with dpg.plot(label="Angle Plot", height=PLOT_HEIGHT, width=PLOT_WIDTH):
+                    dpg.add_plot_axis(dpg.mvXAxis, label="X Axis")
+                    y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Angle")
+                    dpg.add_line_series(x_data, angle_data, label="Angle Data", parent=y_axis)
+                
+                with dpg.plot(label="Angular Velocity Plot", height=PLOT_HEIGHT, width=PLOT_WIDTH):
+                    dpg.add_plot_axis(dpg.mvXAxis, label="X Axis")
+                    y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Angular Velocity")
+                    dpg.add_line_series(x_data, angular_velocity_data, label="Angular Velocity Data", parent=y_axis)
+            
+            # Group for bottom two plots (displacement and PWM)
+            with dpg.group():
+                with dpg.plot(label="Displacement Plot", height=PLOT_HEIGHT, width=PLOT_WIDTH):
+                    dpg.add_plot_axis(dpg.mvXAxis, label="X Axis")
+                    y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Displacement")
+                    dpg.add_line_series(x_data, displacement_data, label="Displacement Data", parent=y_axis)
+                
+                with dpg.plot(label="PWM Plot", height=PLOT_HEIGHT, width=PLOT_WIDTH):
+                    dpg.add_plot_axis(dpg.mvXAxis, label="X Axis")
+                    y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="PWM")
+                    dpg.add_line_series(x_data, pwm_data, label="PWM Data", parent=y_axis)
 
-        # Group for the plots
-        with dpg.group():
-            # Plot for angle
-            with dpg.plot(label="Angle Plot", height=PLOT_HEIGHT, width=PLOT_WIDTH):
-                dpg.add_plot_axis(dpg.mvXAxis, label="X Axis")
-                y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Angle")
-                dpg.add_line_series(x_data, angle_data, label="Angle Data", parent=y_axis)
+        # Group for sliders (Balancing Controller and Following Controller)
+        with dpg.group(horizontal=True):
+            # Balancing Controller Sliders (stacked vertically)
+            with dpg.group():
+                dpg.add_text(f"{KP_LABEL}: 0.00", tag="kp_label")
+                dpg.add_slider_float(label=KP_LABEL, default_value=0, min_value=0, max_value=10, callback=update_kp, width=SLIDER_WIDTH)
+                
+                dpg.add_text(f"{KD_LABEL}: 0.00", tag="kd_label")
+                dpg.add_slider_float(label=KD_LABEL, default_value=0, min_value=0, max_value=10, callback=update_kd, width=SLIDER_WIDTH)
+                
+                dpg.add_text(f"{KI_LABEL}: 0.00", tag="ki_label")
+                dpg.add_slider_float(label=KI_LABEL, default_value=0, min_value=0, max_value=10, callback=update_ki, width=SLIDER_WIDTH)
 
-            # Plot for angular velocity
-            with dpg.plot(label="Angular Velocity Plot", height=PLOT_HEIGHT, width=PLOT_WIDTH):
-                dpg.add_plot_axis(dpg.mvXAxis, label="X Axis")
-                y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Angular Velocity")
-                dpg.add_line_series(x_data, angular_velocity_data, label="Angular Velocity Data", parent=y_axis)
-
-            # Plot for linear displacement
-            with dpg.plot(label="Linear Displacement Plot", height=PLOT_HEIGHT, width=PLOT_WIDTH):
-                dpg.add_plot_axis(dpg.mvXAxis, label="X Axis")
-                y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Displacement")
-                dpg.add_line_series(x_data, displacement_data, label="Displacement Data", parent=y_axis)
-
-        # Group for the sliders (to the right)
-        with dpg.group():
-            # Balancing Controller Label
-            dpg.add_text(BALANCING_CONTROLLER_LABEL)
-            # Sliders and labels for Balancing Controller Kp, Kd, Ki
-            dpg.add_text(f"{KP_LABEL}: 0.00", tag="kp_label")
-            dpg.add_slider_float(label=KP_LABEL, default_value=0, min_value=0, max_value=10, callback=update_kp, width=SLIDER_WIDTH)
-
-            dpg.add_text(f"{KD_LABEL}: 0.00", tag="kd_label")
-            dpg.add_slider_float(label=KD_LABEL, default_value=0, min_value=0, max_value=10, callback=update_kd, width=SLIDER_WIDTH)
-
-            dpg.add_text(f"{KI_LABEL}: 0.00", tag="ki_label")
-            dpg.add_slider_float(label=KI_LABEL, default_value=0, min_value=0, max_value=10, callback=update_ki, width=SLIDER_WIDTH)
-
-            # Spacer
+            # Spacer between Balancing and Following sliders
             dpg.add_spacing(count=SPACING_BETWEEN_GROUPS)
 
-            # Following Controller Label
-            dpg.add_text(FOLLOWING_CONTROLLER_LABEL)
-            # Sliders and labels for Following Controller Kp, Kd, Ki
-            dpg.add_text(f"{KP2_LABEL}: 0.00", tag="kp2_label")
-            dpg.add_slider_float(label=KP2_LABEL, default_value=0, min_value=0, max_value=10, callback=update_kp2, width=SLIDER_WIDTH)
+            # Following Controller Sliders (stacked vertically)
+            with dpg.group():
+                dpg.add_text(f"{KP2_LABEL}: 0.00", tag="kp2_label")
+                dpg.add_slider_float(label=KP2_LABEL, default_value=0, min_value=0, max_value=10, callback=update_kp2, width=SLIDER_WIDTH)
+                
+                dpg.add_text(f"{KD2_LABEL}: 0.00", tag="kd2_label")
+                dpg.add_slider_float(label=KD2_LABEL, default_value=0, min_value=0, max_value=10, callback=update_kd2, width=SLIDER_WIDTH)
+                
+                dpg.add_text(f"{KI2_LABEL}: 0.00", tag="ki2_label")
+                dpg.add_slider_float(label=KI2_LABEL, default_value=0, min_value=0, max_value=10, callback=update_ki2, width=SLIDER_WIDTH)
 
-            dpg.add_text(f"{KD2_LABEL}: 0.00", tag="kd2_label")
-            dpg.add_slider_float(label=KD2_LABEL, default_value=0, min_value=0, max_value=10, callback=update_kd2, width=SLIDER_WIDTH)
-
-            dpg.add_text(f"{KI2_LABEL}: 0.00", tag="ki2_label")
-            dpg.add_slider_float(label=KI2_LABEL, default_value=0, min_value=0, max_value=10, callback=update_ki2, width=SLIDER_WIDTH)
-
-            # Normal button added below sliders with color change functionality
-            dpg.add_button(label="Following", tag="following_button", callback=following_button_callback, width=SLIDER_WIDTH)
-            dpg.bind_item_theme("following_button", default_button_theme)
+        # Add the button for "Following Activated"
+        dpg.add_button(label="Following", tag="following_button", callback=following_button_callback, width=SLIDER_WIDTH)
+        dpg.bind_item_theme("following_button", default_button_theme)
 
 # ---------------------------
 # Main Loop
@@ -228,11 +257,15 @@ dpg.show_viewport()
 # Continuously check for stable gains to print
 try:
     while dpg.is_dearpygui_running():
-        print_balancing_gains_if_stable()  # Check if balancing gains need to be printed
-        print_following_gains_if_stable()  # Check if following gains need to be printed
-        dpg.render_dearpygui_frame()
+        print_balancing_gains_if_stable()  # Check if balancing gains need to be printed and published
+        print_following_gains_if_stable()  # Check if following gains need to be printed and published
+        dpg.render_dearpygui_frame()  # Render the GUI frame
+        time.sleep(0.01)  # Add a small delay to limit updates and improve performance
 except KeyboardInterrupt:
     print("Window Closing")
     print("---------------------")
 # Clean up Dear PyGui context
 dpg.destroy_context()
+
+# Disconnect MQTT client
+client.disconnect()

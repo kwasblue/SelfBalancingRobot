@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "Arduino_Communicator",
+			"path": "Arduino_Communicator"
+		}
+	],
+	"settings": {}
+}
