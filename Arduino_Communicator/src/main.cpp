@@ -1,167 +1,155 @@
+#include <Arduino.h>
+#include <Wire.h>
 #include <WiFi.h>
-#include <PubSubClient.h>
-#include <Adafruit_SSD1306.h>
+#include <PubSubClient.h> // Include the MQTT library
 
-// Wi-Fi and MQTT settings
-const char* ssid = "Tufts_Robot";  // Replace with your Wi-Fi SSID
-const char* password = "";  // Replace with your Wi-Fi password
-const char* mqtt_server = "broker.hivemq.com";  // Public broker
+// I2C and MPU6050 variables
+const int MPU = 0x68;              // MPU6050 I2C address
+float GyroX, GyroY, GyroZ;
+float gyroAngleX, gyroAngleY, yaw;
+float elapsedTime, currentTime, previousTime;
+float mqttGyroX, mqttGyroY, mqttGyroZ; // For MQTT task
 
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire);
+// Timing and loop frequency variables
+unsigned long lastMQTTTransmission = 0;
+unsigned long loopStartTime, loopEndTime;
+float loopFrequency;
 
+// Wi-Fi and MQTT credentials and settings
+const char* ssid = "hoe5andMicha3l";       // Wi-Fi SSID
+const char* password = "DashiLover69";     // Wi-Fi Password
+const char* mqtt_server = "10.0.0.25";     // MQTT Broker IP Address
+const int mqtt_port = 1883;                // MQTT Broker Port (default is 1883)
+
+// Task settings
+const int mqttTaskDelayMs = 20;            // MQTT task delay in milliseconds (50Hz)
+const int i2cTaskDelayMs = 1;              // I2C task delay in milliseconds
+
+// MQTT client setup
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-String mqtt_message = "";  // Stores the last received MQTT message
-String current_gains = "gains:";  // Initialize current gains
+// Task handles
+TaskHandle_t MQTTTask;
 
-// Wi-Fi symbol bitmap
-#define WIFI_SYMBOL_WIDTH  16
-#define WIFI_SYMBOL_HEIGHT 16
-
-static const unsigned char PROGMEM wifi2_icon16x16[] = {
-  0b00000000, 0b00000000, //                 
-  0b00000000, 0b00000000, //                 
-  0b00000000, 0b00000000, //                 
-  0b00000000, 0b00000000, //                 
-  0b00000000, 0b00000000, //                 
-  0b00000111, 0b11100000, //      ######     
-  0b00001111, 0b11110000, //     ########    
-  0b00011000, 0b00011000, //    ##      ##   
-  0b00000011, 0b11000000, //       ####      
-  0b00000111, 0b11100000, //      ######     
-  0b00000100, 0b00100000, //      #    #     
-  0b00000001, 0b10000000, //        ##       
-  0b00000001, 0b10000000, //        ##       
-  0b00000000, 0b00000000, //                 
-  0b00000000, 0b00000000, //                 
-  0b00000000, 0b00000000, //                 
-};
-
-// Function to update the OLED display
-void updateDisplay(bool wifi_connected) {
-  display.clearDisplay();
-
-  // Display Wi-Fi status
-  if (wifi_connected) {
-    display.drawBitmap(SCREEN_WIDTH - WIFI_SYMBOL_WIDTH, 0, wifi2_icon16x16, WIFI_SYMBOL_WIDTH, WIFI_SYMBOL_HEIGHT, WHITE);
-    display.setCursor(0, 50);
-    display.print("WiFi Connected");
-  } else {
-    display.setCursor(0, 50);
-    display.print("WiFi Disconnected");
-  }
-
-  // Display the current gains value
-  display.setCursor(0, 20);
-  display.print(current_gains);
-
-  display.display();
-}
-
+// Function to set up Wi-Fi connection
 void setup_wifi() {
   delay(10);
-  updateDisplay(false);  // Show "Connecting to Wi-Fi..."
-
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-
+  Serial.println("Connecting to WiFi...");
   WiFi.begin(ssid, password);
-
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    updateDisplay(false);  // Show "Connecting..."
     Serial.print(".");
   }
-
-  Serial.println("");
-  Serial.println("WiFi connected");
-
-  // Show Wi-Fi connected and update the display
-  updateDisplay(true);
+  Serial.println("\nWiFi connected");
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-
-  mqtt_message = "";  // Clear previous message
-  for (int i = 0; i < length; i++) {
-    mqtt_message += (char)payload[i];  // Append each byte to string
-  }
-
-  Serial.println(mqtt_message);
-
-  // Update the current gains variable with the new message
-  current_gains = "gains: " + mqtt_message;
-
-  // Update the display to show the new gains and Wi-Fi status
-  updateDisplay(WiFi.status() == WL_CONNECTED);
-}
-
+// Function to reconnect to MQTT broker
 void reconnect() {
-  // Loop until we're reconnected
   while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    updateDisplay(WiFi.status() == WL_CONNECTED);  // Keep showing Wi-Fi status
-    
-    // Create a random client ID
-    String clientId = "ESP32Client-";
-    clientId += String(random(0xffff), HEX);
-    
-    // Attempt to connect
-    if (client.connect(clientId.c_str())) {
-      Serial.println("connected");
-      updateDisplay(WiFi.status() == WL_CONNECTED);
-
-      // Once connected, publish an announcement...
-      client.publish("esp32/test", "hello world");
-      // ... and resubscribe to the topic
-      client.subscribe("esp32/gains/follow");
+    Serial.println("Attempting MQTT connection...");
+    if (client.connect("ESP32Gyro")) {
+      Serial.println("Connected to MQTT broker");
     } else {
-      Serial.print("failed, rc=");
+      Serial.print("Failed to connect, rc=");
       Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      updateDisplay(WiFi.status() == WL_CONNECTED);  // Show Wi-Fi status during retry
+      Serial.println(". Retrying in 5 seconds...");
       delay(5000);
     }
   }
 }
 
+// Task to send data via MQTT
+void MQTTTaskCode(void *pvParameters) {
+  while (true) {
+    if (!client.connected()) {
+      reconnect();
+    }
+    client.loop();
+
+    unsigned long now = millis();
+    // Transmit data at 50 Hz (every 20ms)
+    if (now - lastMQTTTransmission > mqttTaskDelayMs) {
+      lastMQTTTransmission = now;
+
+      // Prepare the data in a format suitable for transmission (CSV format in this case)
+      char msg[100];
+      snprintf(msg, 100, "GyroX: %.2f, GyroY: %.2f, GyroZ: %.2f", mqttGyroX, mqttGyroY, mqttGyroZ);
+
+      // Publish the message to a topic
+      client.publish("gyro/data", msg);
+    }
+    vTaskDelay(1); // Yield to other tasks
+  }
+}
+
+// Task for reading I2C data, pinned to core 1
+void i2cTask(void *pvParameters) {
+  while (true) {
+    loopStartTime = micros(); // Capture the start time of the loop
+
+    // Calculate elapsed time for sensor integration
+    previousTime = currentTime;
+    currentTime = millis();
+    elapsedTime = (currentTime - previousTime) / 1000.0;
+
+    // === Read gyroscope data === //
+    Wire.beginTransmission(MPU);
+    Wire.write(0x43); // Gyro data first register address 0x43
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU, 6);
+
+    GyroX = (Wire.read() << 8 | Wire.read()) / 131.0;
+    GyroY = (Wire.read() << 8 | Wire.read()) / 131.0;
+    GyroZ = (Wire.read() << 8 | Wire.read()) / 131.0;
+
+    // Apply calibration offsets to gyro data
+    GyroX += 0.56;
+    GyroY -= 2;
+    GyroZ += 0.79;
+
+    // Integrate gyro angles over time
+    gyroAngleX += GyroX * elapsedTime;
+    gyroAngleY += GyroY * elapsedTime;
+    yaw += GyroZ * elapsedTime;
+
+    // Update the shared gyro values for MQTT transmission
+    mqttGyroX = GyroX;
+    mqttGyroY = GyroY;
+    mqttGyroZ = GyroZ;
+
+    // Calculate and print the loop frequency
+    loopEndTime = micros(); // Capture the end time of the loop
+    loopFrequency = 1000000.0 / (loopEndTime - loopStartTime); // Calculate loop frequency in Hz
+    Serial.print("Loop Frequency: ");
+    Serial.println(loopFrequency);
+
+    vTaskDelay(i2cTaskDelayMs); // Yield to other tasks
+  }
+}
+
 void setup() {
   Serial.begin(115200);
-  
-  // Setup OLED display
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
-    Serial.println(F("SSD1306 allocation failed"));
-    for (;;);
-  }
+  Wire.begin();
+  Wire.setClock(400000); // Set I2C clock to 400 kHz for faster communication
 
-  // Connect to Wi-Fi
+  // Initialize WiFi and MQTT
   setup_wifi();
+  client.setServer(mqtt_server, mqtt_port);
 
-  // Initialize MQTT
-  client.setServer(mqtt_server, 1883);
-  client.setCallback(callback);
+  // Start the MQTT task with lower priority and pin it to core 0
+  xTaskCreatePinnedToCore(MQTTTaskCode, "MQTT Task", 10000, NULL, 1, &MQTTTask, 0);
+
+  // Start the I2C communication (main loop) task on core 1
+  xTaskCreatePinnedToCore(i2cTask, "I2C Task", 10000, NULL, 2, NULL, 1);
+
+  // Initialize the MPU6050
+  Wire.beginTransmission(MPU);
+  Wire.write(0x6B);
+  Wire.write(0x00); // Wake up MPU6050
+  Wire.endTransmission(true);
 }
 
 void loop() {
-  // Check Wi-Fi connection status and update display
-  if (WiFi.status() != WL_CONNECTED) {
-    setup_wifi();  // Attempt to reconnect Wi-Fi
-  }
-
-  // MQTT handling
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
-
-  // Continuously display the Wi-Fi status and current gains
-  updateDisplay(WiFi.status() == WL_CONNECTED);
-  delay(100)
+  // Empty because i2cTask is running on core 1
 }
