@@ -203,10 +203,10 @@ void i2cTask(void *pvParameters) {
     error = 180 - anglex;
     duty_cycle = 50 + (Kp * error) + (Kd * (-GyroX));
 
-    // Safety cutoff for duty cycle
-    if (anglex > 270 || anglex < 90) {
-      duty_cycle = 0;
-    }
+    // // Safety cutoff for duty cycle
+    // if (anglex > 270 || anglex < 90) {
+    //   duty_cycle = 0;
+    // }
 
     // Motor control
     motor1(duty_cycle);
