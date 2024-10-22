@@ -18,7 +18,7 @@ int in4 = 2;
 int duty_cycle = 0;
 float error = 0;
 float Kp = 20;
-float Kd = 10;
+float Kd = 0;
 float anglex = 0;
 float roll = 0;  // Rotation about x-axis
 
@@ -33,7 +33,7 @@ const int mqtt_port = 1883;               // MQTT Broker Port
 
 // Task settings
 const int mqttTaskDelayMs = 20;           // MQTT task delay in milliseconds (50Hz)
-const int i2cTaskDelayMs = 1;             // I2C task delay in milliseconds
+const int i2cTaskDelayMs = 0.1;             // I2C task delay in milliseconds
 const int mqttPublishIntervalMs = 10;   // MQTT data publishing interval (1 second)
 
 // MQTT client setup
@@ -176,10 +176,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         Kd = newKd;
 
         // Print the new values of Kp and Kd
-        Serial.print("Updated Kp: ");
-        Serial.print(Kp);
-        Serial.print(" | Kd: ");
-        Serial.println(Kd);
+        // Serial.print("Updated Kp: ");
+        // Serial.print(Kp);
+        // Serial.print(" | Kd: ");
+        // Serial.println(Kd);
       } else {
         Serial.println("Failed to parse Kp and Kd from payload.");
       }
@@ -232,9 +232,14 @@ void i2cTask(void *pvParameters) {
     Wire.endTransmission(false);
     Wire.requestFrom(MPU, 6);
 
-    GyroX = (Wire.read() << 8 | Wire.read()) / 131.0;
-    GyroY = (Wire.read() << 8 | Wire.read()) / 131.0;
-    GyroZ = (Wire.read() << 8 | Wire.read()) / 131.0;
+    int16_t rawGyroX = (int16_t)(Wire.read() << 8 | Wire.read());
+    int16_t rawGyroY = (int16_t)(Wire.read() << 8 | Wire.read());
+    int16_t rawGyroZ = (int16_t)(Wire.read() << 8 | Wire.read());
+
+    float GyroX = rawGyroX / 131.0;
+    float GyroY = rawGyroY / 131.0;
+    float GyroZ = rawGyroZ / 131.0;
+
 
     // Calculate roll (angle about x-axis) from accelerometer
     Wire.beginTransmission(MPU);
@@ -242,17 +247,22 @@ void i2cTask(void *pvParameters) {
     Wire.endTransmission(false);
     Wire.requestFrom(MPU, 6);
 
-    float AccX = (Wire.read() << 8 | Wire.read()) / 16384.0;
+    int16_t rawAccX = (int16_t)(Wire.read() << 8 | Wire.read());
     
-    float AccY = (Wire.read() << 8 | Wire.read()) / 16384.0;
+    int16_t rawAccY = (int16_t)(Wire.read() << 8 | Wire.read());
     
-    float AccZ = (Wire.read() << 8 | Wire.read()) / 16384.0;
+    int16_t rawAccZ = (int16_t)(Wire.read() << 8 | Wire.read());
     
-    Serial.print(AccX);
-    Serial.print("\t");
-    Serial.print(AccY);
-    Serial.print("\t");
-    Serial.println(AccZ);
+    float AccX = rawAccX / 16384.0;
+    float AccY = rawAccY / 16384.0;
+    float AccZ = rawAccZ / 16384.0;
+
+    //// Option to view raw accelerometer values
+    // Serial.print(AccX);
+    // Serial.print("\t");
+    // Serial.print(AccY);
+    // Serial.print("\t");
+    // Serial.println(AccZ);
 
     gyroanglex = ((GyroX - GyroX_last) * (float)dt / 1000) * (180 / PI);
     roll = atan2(AccY, AccZ) + PI;
@@ -306,6 +316,7 @@ void setup() {
   Wire.beginTransmission(MPU);
   Wire.write(0x6B);
   Wire.write(0x00);  // Wake up MPU6050
+  Wire.write(0x01);
   Wire.endTransmission(true);
 
   // Configure Gyro Range
@@ -315,7 +326,7 @@ void setup() {
   setAccelRange(MPU6050_RANGE_2_G);  // Set to ±2g (default)
   
   // Configure Digital Low-Pass Filter
-  setDLPF(MPU6050_BAND_184_HZ);  // Set to 184 Hz bandwidth (default)
+  setDLPF(MPU6050_BAND_94_HZ);  // Set to 184 Hz bandwidth (default)
 
   Serial.println("MPU6050 configured.");
 }
