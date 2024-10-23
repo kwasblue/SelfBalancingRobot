@@ -18,7 +18,7 @@ int in3 = 4;
 int in4 = 2;
 int duty_cycle = 0;
 float error = 0;
-float max_PWM_angle = 45;
+float max_PWM_angle = 40;
 float min_PWM = 50;
 float Kp = 1.0;    // Initial value for Kp
 float Kp0 = (255-min_PWM)/max_PWM_angle; // normalization value for max PWM at 45 degrees
@@ -59,7 +59,7 @@ struct BalancingGains {
   bool newGainsAvailable;
 };
 
-BalancingGains gains = {20.0, 0.0, false};  // Initialize gains with Kp = 20 and Kd = 0
+BalancingGains gains = {1.0, 0.0, false};  // Initialize gains with Kp = 20 and Kd = 0
 SemaphoreHandle_t gainsMutex;  // Mutex to protect shared data
 
 // Gyro range options (in degrees per second)
